@@ -5,6 +5,7 @@ import asyncio
 import json
 import time
 import jwt
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +16,30 @@ from pywebpush import WebPusher
 from cryptography.hazmat.primitives.asymmetric.ec import derive_private_key, SECP256R1
 import base64 as _base64
 
-app = FastAPI()
+AUTO_EXPIRE_HOURS = 3
+
+
+async def auto_expire_task():
+    while True:
+        await asyncio.sleep(300)  # elke 5 minuten controleren
+        now = datetime.now(timezone.utc)
+        expired = [
+            name for name, since in list(available_users.items())
+            if (now - datetime.fromisoformat(since)).total_seconds() > AUTO_EXPIRE_HOURS * 3600
+        ]
+        for name in expired:
+            available_users.pop(name, None)
+            await broadcast({"type": "unavailable", "name": name})
+            print(f"[AUTO] {name} automatisch afgemeld na {AUTO_EXPIRE_HOURS} uur")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(auto_expire_task())
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "belletje")
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
